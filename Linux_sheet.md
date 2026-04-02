@@ -1,0 +1,25 @@
+- `pwd` 显示当前路径
+- `ls -la` 列出所有文件（含隐藏）
+- `cd ~` 回家目录
+- `cp -r src dst` 复制目录
+- `rm -rf dir` 强制删除（小心！）
+- `mv old new` 移动/重命名
+- `top` / `htop` 实时监控
+- `df -h` 磁盘空间
+- `free -m` 内存
+- `systemctl status nginx` 查看服务状态
+- `journalctl -u nginx` 查看服务日志
+- `ip addr` 查看IP
+- `ping baidu.com` 测试连通
+- `netstat -tlnp` 查看监听端口
+- `grep "error" file` 搜索行
+- `grep -c "error" file` 计数
+- `awk '{print $1}'` 取第一列
+- `sed 's/old/new/g'` 替换
+- `ps aux | grep nginx` 管道组合
+- `#!/bin/bash` 脚本开头
+- `VAR="value"` 变量（等号无空格）
+- `$VAR` 引用变量
+- `$(command)` 命令替换
+- `if [ -f file ]; then ... fi`
+- `for i in {1..5}; do ... done`
