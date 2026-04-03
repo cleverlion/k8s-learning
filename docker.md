@@ -1,14 +1,16 @@
 #镜像
-docker search
-docker pull xx
-docker images
-docker rmi
+- docker search
+- docker pull xx
+- docker images
+- docker rmi
 
 #容器：
 docker run 
 	-d 后台启动
 	--name 起的名称
 	-p 端口映射 8080:80
+	-v 目录挂载 docker run -d -p 8010:80 -v ~/app/nghtml:/usr/share/nginx/html --name app01 nginx
+	-v ngconf:/etc/nginx 卷映射 默认的路径为：/var/lib/docker/volumes/<volumes-name>
 docker ps 
 docker ps -a
 docker stop
