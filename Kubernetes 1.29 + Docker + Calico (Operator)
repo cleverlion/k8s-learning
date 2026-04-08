@@ -1,0 +1,253 @@
+# Kubernetes 1.29 + Docker + Calico (Operator) 集群部署指南
+
+## 环境信息
+- 操作系统：Ubuntu 22.04
+- 容器运行时：Docker CE + cri-dockerd
+- Pod 网络：Calico (Tigera Operator 方式)
+- 节点规划：
+  - Master：192.168.6.100 (主机名：master-node)
+  - Worker：192.168.6.103 (主机名：worker-node)
+- Kubernetes 版本：v1.29.0
+
+---
+
+## 一、基础环境准备（所有节点）
+
+### 1. 设置主机名
+```bash
+# Master 节点
+sudo hostnamectl set-hostname master-node
+
+# Worker 节点
+sudo hostnamectl set-hostname worker-node
+
+2. 配置 hosts 文件
+bash
+sudo tee -a /etc/hosts <<EOF
+192.168.6.100 master-node
+192.168.6.103 worker-node
+EOF
+3. 关闭 Swap 并加载内核模块
+bash
+sudo swapoff -a
+sudo sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
+
+cat <<EOF | sudo tee /etc/modules-load.d/k8s.conf
+overlay
+br_netfilter
+EOF
+
+sudo modprobe overlay
+sudo modprobe br_netfilter
+
+cat <<EOF | sudo tee /etc/sysctl.d/k8s.conf
+net.bridge.bridge-nf-call-iptables  = 1
+net.bridge.bridge-nf-call-ip6tables = 1
+net.ipv4.ip_forward                 = 1
+EOF
+
+sudo sysctl --system
+4. 安装必要工具
+bash
+sudo apt update
+sudo apt install -y ipset ipvsadm chrony
+5. 配置时区与时间同步
+bash
+sudo timedatectl set-timezone Asia/Shanghai
+sudo systemctl enable --now chrony
+二、安装与配置 Docker（所有节点）
+1. 安装 Docker CE
+bash
+sudo apt update
+sudo apt install -y ca-certificates curl
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+sudo apt update
+sudo apt install -y docker-ce docker-ce-cli containerd.io
+2. 配置 Docker（cgroup 驱动 + 镜像加速）
+bash
+sudo tee /etc/docker/daemon.json <<EOF
+{
+  "exec-opts": ["native.cgroupdriver=systemd"],
+  "registry-mirrors": [
+    "https://registry.cn-hangzhou.aliyuncs.com",
+    "https://docker.mirrors.ustc.edu.cn"
+  ],
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "100m"
+  },
+  "storage-driver": "overlay2"
+}
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl restart docker
+sudo systemctl enable docker
+3. 将普通用户加入 docker 组
+bash
+sudo usermod -aG docker $USER
+newgrp docker   # 或重新登录 SSH
+三、安装 cri-dockerd（所有节点）
+1. 下载并安装二进制文件
+bash
+VERSION="0.3.17"
+wget https://github.com/Mirantis/cri-dockerd/releases/download/v${VERSION}/cri-dockerd-${VERSION}.amd64.tgz
+tar -xvf cri-dockerd-${VERSION}.amd64.tgz
+sudo mv cri-dockerd/cri-dockerd /usr/local/bin/
+sudo chmod +x /usr/local/bin/cri-dockerd
+2. 创建 systemd 服务文件
+bash
+sudo tee /etc/systemd/system/cri-dockerd.socket <<EOF
+[Unit]
+Description=CRI Docker Socket for the API
+PartOf=cri-dockerd.service
+
+[Socket]
+ListenStream=/var/run/cri-dockerd.sock
+SocketMode=0660
+SocketUser=root
+SocketGroup=docker
+
+[Install]
+WantedBy=sockets.target
+EOF
+
+sudo tee /etc/systemd/system/cri-dockerd.service <<EOF
+[Unit]
+Description=CRI Interface for Docker Application Container Engine
+Documentation=https://docs.mirantis.com
+After=network-online.target firewalld.service docker.service
+Wants=network-online.target
+Requires=cri-dockerd.socket
+
+[Service]
+Type=notify
+ExecStart=/usr/local/bin/cri-dockerd --container-runtime-endpoint fd:// \\
+  --network-plugin=cni \\
+  --pod-infra-container-image=registry.aliyuncs.com/google_containers/pause:3.9
+ExecReload=/bin/kill -s HUP \$MAINPID
+TimeoutSec=0
+RestartSec=2
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now cri-dockerd.socket cri-dockerd.service
+四、安装 Kubernetes 1.29 组件（所有节点）
+1. 添加 K8s 1.29 仓库
+bash
+sudo mkdir -p -m 755 /etc/apt/keyrings
+curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.29/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.29/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
+2. 安装并锁定版本
+bash
+sudo apt update
+sudo apt install -y kubelet kubeadm kubectl kubernetes-cni cri-tools
+sudo apt-mark hold kubelet kubeadm kubectl
+3. 配置 kubelet cgroup 驱动
+bash
+sudo mkdir -p /etc/systemd/system/kubelet.service.d
+sudo tee /etc/systemd/system/kubelet.service.d/11-cgroup-driver.conf <<EOF
+[Service]
+Environment="KUBELET_EXTRA_ARGS=--cgroup-driver=systemd"
+EOF
+sudo systemctl daemon-reload
+五、初始化 Master 节点（仅在 master-node 执行）
+1. 创建 kubeadm 配置文件 kubeadm-config.yaml
+yaml
+apiVersion: kubeadm.k8s.io/v1beta3
+kind: InitConfiguration
+localAPIEndpoint:
+  advertiseAddress: 192.168.6.100
+  bindPort: 6443
+nodeRegistration:
+  criSocket: unix:///var/run/cri-dockerd.sock
+  name: master-node
+  kubeletExtraArgs:
+    cgroup-driver: "systemd"
+---
+apiVersion: kubeadm.k8s.io/v1beta3
+kind: ClusterConfiguration
+kubernetesVersion: 1.29.0
+imageRepository: registry.aliyuncs.com/google_containers
+networking:
+  podSubnet: 10.244.0.0/16
+  serviceSubnet: 10.96.0.0/12
+2. 初始化集群
+bash
+sudo kubeadm init --config kubeadm-config.yaml
+3. 配置 kubectl
+bash
+mkdir -p $HOME/.kube
+sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+sudo chown $(id -u):$(id -g) $HOME/.kube/config
+4. 记录 join 命令（输出末尾一行）
+初始化成功后，屏幕会输出类似以下命令，请妥善保存：
+
+bash
+kubeadm join 192.168.6.100:6443 --token <token> --discovery-token-ca-cert-hash sha256:<hash>
+六、加入 Worker 节点（仅在 worker-node 执行）
+使用上一步保存的 join 命令，并必须添加 --cri-socket 参数：
+
+bash
+sudo kubeadm join 192.168.6.100:6443 --token <token> \
+    --discovery-token-ca-cert-hash sha256:<hash> \
+    --cri-socket unix:///var/run/cri-dockerd.sock
+七、部署 Calico 网络（Operator 方式，Master 节点执行）
+1. 安装 Tigera Operator
+bash
+kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.29.0/manifests/tigera-operator.yaml
+2. 创建 Installation 资源 calico-installation.yaml
+yaml
+apiVersion: operator.tigera.io/v1
+kind: Installation
+metadata:
+  name: default
+spec:
+  registry: quay.io/
+  calicoNetwork:
+    ipPools:
+    - name: default-ipv4-ippool
+      cidr: 10.244.0.0/16
+      blockSize: 26
+      encapsulation: VXLANCrossSubnet
+      natOutgoing: Enabled
+bash
+kubectl create -f calico-installation.yaml
+3. （可选）手动拉取镜像加速
+若从 quay.io 拉取缓慢，可在所有节点执行：
+
+bash
+for img in node cni pod2daemon-flexvol kube-controllers typha; do
+    docker pull quay.io/calico/$img:v3.29.0
+done
+4. 验证 Calico
+bash
+kubectl get pods -n calico-system -w
+kubectl get nodes   # 等待所有节点状态变为 Ready
+八、集群验证
+bash
+kubectl get nodes
+kubectl run nginx-test --image=nginx
+kubectl get pods -o wide
+九、常见问题与解决
+现象	原因	解决
+Pod CrashLoopBackOff / Init:0/3	cgroup 驱动不一致	确保 Docker 和 kubelet 均使用 systemd
+Failed to pull image "registry.k8s.io/pause"	默认仓库不可达	kubeadm init 时指定 --image-repository=registry.aliyuncs.com/google_containers
+InvalidImageName	registry 字段格式错误	确保为 quay.io/（末尾有斜杠，无协议前缀）
+磁盘空间满导致 Operator 异常	Docker 日志/镜像堆积	配置日志轮转，定期 docker system prune -a -f
+crictl 连接报错	未指定正确的 runtime-endpoint	本环境使用 Docker，crictl 需指向 unix:///var/run/cri-dockerd.sock
+十、日常运维建议
+每天执行 kubectl get nodes 和 kubectl get pods -A | grep -v Running 快速巡检
+
+每周执行 docker system prune -a -f 清理无用镜像释放空间
+
+核心组件镜像建议在所有节点预先 docker pull 一次，防止后续重启时拉取失败
