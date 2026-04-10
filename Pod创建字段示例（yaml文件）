@@ -1,0 +1,108 @@
+apiVersion: v1                # Kubernetes API 版本
+kind: Pod                     # 资源类型：Pod
+metadata:                     # 元数据
+  name: nginx-demo            # Pod 名称（必填）
+  namespace: default          # 命名空间（默认是 default，不填则使用 default）
+  labels:                     # 标签（用于 Service、Deployment 等选择）
+    type: app
+    version: v1.0.0
+  annotations:                # 注解（非标识性元数据，用于记录信息或工具集成）
+    description: "This is a demo nginx pod"
+spec:                         # Pod 规约（期望状态）
+  # ----- 容器定义（至少一个）-----
+  containers:
+  - name: nginx               # 容器名称（必填）
+    image: nginx:1.25         # 镜像及标签（建议指定具体版本，不要用 latest）
+    imagePullPolicy: IfNotPresent  # 镜像拉取策略：Always/IfNotPresent/Never
+    command:                  # 容器启动命令（覆盖镜像的 ENTRYPOINT）
+    - nginx
+    - -g
+    - 'daemon off;'           # nginx -g 'daemon off;'（前台运行）
+    workingDir: /usr/share/nginx/html  # 容器工作目录
+    ports:
+    - name: http              # 端口名称（便于 Service 引用）
+      containerPort: 80       # 容器内需要暴露的端口（必填）
+      protocol: TCP           # 协议 TCP/UDP/SCTP
+      # hostPort: 80          # 宿主机端口映射（不推荐，会限制调度）
+    env:                      # 环境变量
+    - name: JVM_OPTS
+      value: '-Xms128m -Xmx128m'
+    - name: ENVIRONMENT
+      value: "production"
+    # ----- 资源限制（强烈推荐）-----
+    resources:
+      requests:               # 调度时保证的资源（调度依据）
+        cpu: 100m             # 0.1 个 CPU 核心（1000m = 1 核）
+        memory: 128Mi         # 128 MiB 内存
+      limits:                 # 运行时最大可用资源
+        cpu: 200m
+        memory: 256Mi
+    # ----- 健康探针（生产必备）-----
+    livenessProbe:            # 存活探针：失败则重启容器
+      httpGet:
+        path: /healthz
+        port: 80
+      initialDelaySeconds: 30 # 容器启动后多久开始探测
+      periodSeconds: 10       # 探测频率
+      timeoutSeconds: 1
+      failureThreshold: 3
+    readinessProbe:           # 就绪探针：失败则从 Service 摘除流量
+      httpGet:
+        path: /ready
+        port: 80
+      initialDelaySeconds: 5
+      periodSeconds: 5
+    # startupProbe:           # 启动探针（用于慢启动容器）
+    #   httpGet:
+    #     path: /startup
+    #     port: 80
+    #   failureThreshold: 30
+    #   periodSeconds: 10
+    # ----- 安全上下文 -----
+    securityContext:          # 容器级别安全设置（可选）
+      runAsNonRoot: false     # 是否以非 root 运行
+      privileged: false       # 是否特权模式
+      capabilities:           # Linux 能力
+        add: ["NET_ADMIN"]
+    # ----- 挂载卷（如果需要）-----
+    volumeMounts:             # 挂载卷到容器内路径
+    - name: html-storage
+      mountPath: /usr/share/nginx/html
+      readOnly: false
+    - name: config
+      mountPath: /etc/nginx/conf.d
+      readOnly: true
+  # ----- 卷定义（配合 volumeMounts）-----
+  volumes:
+  - name: html-storage
+    persistentVolumeClaim:    # 使用 PVC 持久化存储
+      claimName: nginx-pvc
+  - name: config
+    configMap:                # 使用 ConfigMap 注入配置
+      name: nginx-config
+  # ----- 重启策略 -----
+  restartPolicy: OnFailure    # Always（默认）/ OnFailure / Never
+  # ----- 优雅终止时间 -----
+  terminationGracePeriodSeconds: 60   # 给容器 60 秒处理退出信号
+  # ----- 调度策略（可选）-----
+  nodeSelector:               # 选择特定标签的节点
+    disktype: ssd
+  tolerations:                # 容忍污点
+  - key: "node-role.kubernetes.io/master"
+    operator: "Exists"
+    effect: "NoSchedule"
+  affinity:                   # 亲和性（更灵活的调度）
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: kubernetes.io/hostname
+            operator: In
+            values:
+            - worker-1
+  # ----- 服务账号（访问 API Server 权限）-----
+  serviceAccountName: default
+  # ----- 主机网络（一般不推荐）-----
+  hostNetwork: false
+  # ----- DNS 策略 -----
+  dnsPolicy: ClusterFirst     # ClusterFirst（默认）、Default、None
