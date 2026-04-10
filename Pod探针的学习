@@ -1,0 +1,64 @@
+探针类型	目的	   失败后动作	                                                                       适用场景
+livenessProbe	   判断容器是否存活（是否死锁、无响应）	重启容器（实现自愈）	              应用死锁、进程僵死、内存泄漏导致无法服务
+readinessProbe	 判断容器是否就绪（能否接收流量）	                                      从 Service 的 Endpoints 中摘除，不重启	启动慢、依赖未就绪、过载保护、临时不可服务
+startupProbe	   判断慢启动容器是否已完成启动	失败则重启（常用于保护 livenessProbe）	    启动时间很长的应用（如 Java 应用需要 1-2 分钟）
+
+
+二、探针的检查方式
+
+方式	说明	适用场景
+httpGet	发起 HTTP GET 请求，状态码在 200-399 之间视为成功	HTTP/HTTPS 服务（如 Web API、健康检查端点）
+tcpSocket	尝试连接指定端口，能建立连接即成功	非 HTTP 协议的服务（如 MySQL、Redis）
+exec	在容器内执行命令，退出码为 0 视为成功	自定义脚本检查（如检查文件是否存在、调用内部命令行）
+
+
+三、生产环境使用场景
+Web 服务（如 Nginx、Spring Boot）	    livenessProbe + readinessProbe，使用 httpGet 指向专用健康检查端点（如 /healthz、/actuator/health）
+数据库（MySQL、Redis）	                tcpSocket 检测端口是否监听，或 exec 执行 mysqladmin ping
+慢启动 Java 应用	                      必须配置 startupProbe，否则 livenessProbe 可能在启动期内误判并重启
+批处理任务（Job）	                    通常不需要探针（restartPolicy=OnFailure 已足够）
+Sidecar 容器（如日志收集）	            通常只配 livenessProbe（确保它活着），readinessProbe 可省略（因为不接收 Service 流量）
+
+
+四、探针参数（重要）
+参数	说明	默认值	生产建议
+initialDelaySeconds	容器启动后多久开始探测	0	根据应用启动时间设置，避免启动期内误判
+periodSeconds	探测周期	10	根据业务敏感度调整，一般 5-30 秒
+timeoutSeconds	探测超时时间	1	网络不稳定可适当增大
+successThreshold	连续几次成功才视为成功	1	通常保持 1
+failureThreshold	连续几次失败才视为失败	3	避免网络抖动导致误判
+
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-probe
+spec:
+  containers:
+  - name: nginx
+    image: nginx:1.25
+    ports:
+    - containerPort: 80
+    livenessProbe:
+      httpGet:
+        path: /
+        port: 80
+      initialDelaySeconds: 15
+      periodSeconds: 10
+      timeoutSeconds: 2
+      failureThreshold: 3
+    readinessProbe:
+      httpGet:
+        path: /
+        port: 80
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      successThreshold: 1
+      failureThreshold: 2
+
+总结
+livenessProbe：死锁/无响应 → 重启容器 → 恢复服务。
+
+readinessProbe：依赖未就绪/过载 → 摘除流量 → 避免业务错误。
+
+startupProbe：保护慢启动应用，防止 livenessProbe 过早介入。
