@@ -1,0 +1,68 @@
+# Kubernetes 标签（Labels）和选择器（Selectors）详解
+
+## 1. 标签（Labels）
+
+标签是附加在 Kubernetes 资源（如 Pod、Service、Deployment、Node 等）上的**键值对**，用于标识和分组资源。标签不是唯一的，多个资源可以有相同的标签。
+
+### 语法规则
+- 键：支持前缀（可选，如 `app.kubernetes.io/name`）和名称，长度不超过 253 字符。
+- 值：长度不超过 63 字符，支持字母、数字、连字符、下划线和点。
+- 示例：`app: nginx`，`tier: frontend`，`version: v1.0.0`
+
+### 在 YAML 中定义标签（以 Pod 为例）
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: my-pod
+  labels:
+    app: nginx
+    tier: backend
+    version: v1.0.0
+spec:
+  containers:
+  - name: nginx
+    image: nginx
+
+# 查看 Pod 的标签
+kubectl get pods --show-labels
+
+# 按标签筛选
+kubectl get pods -l app=nginx
+
+# 添加标签
+kubectl label pods my-pod env=production
+
+# 覆盖标签
+kubectl label pods my-pod env=staging --overwrite
+
+# 删除标签
+kubectl label pods my-pod env-
+
+选择器（Selectors）
+
+相等型选择器
+= 或 ==：等于（例如 app=nginx）
+
+!=：不等于（例如 app!=nginx）
+
+多个条件用逗号分隔，表示 逻辑与（AND）。
+
+示例：kubectl get pods -l app=nginx,tier=frontend
+
+集合型选择器
+in：值在列表中（例如 version in (v1.0, v2.0)）
+
+notin：值不在列表中
+
+exists：存在某个键（例如 !version 表示没有 version 键；version 表示有 version 键）
+
+示例：kubectl get pods -l 'version in (v1.0, v2.0)'
+
+
+筛选所有前端 Pod	kubectl get pods -l tier=frontend
+筛选版本不是 v1 的 Pod	kubectl get pods -l 'version!=v1'
+筛选环境为 prod 且应用为 nginx	kubectl get pods -l app=nginx,env=prod
+节点选择器（调度 Pod）	nodeSelector: { disktype: ssd }
+* 删除所有带有 app=nginx 标签的 Pod	kubectl delete pods -l app=nginx
+NetworkPolicy 选择特定 Pod	podSelector: { matchLabels: { role: db } }
