@@ -1,0 +1,122 @@
+一、Deployment 的作用
+定义 Pod 的期望状态（副本数、镜像、环境变量等）
+
+通过 ReplicaSet 管理 Pod 的生命周期
+
+支持滚动更新（逐步替换旧 Pod）和回滚（恢复到历史版本）
+
+支持暂停/恢复更新（用于金丝雀发布或蓝绿部署）
+
+二、Deployment YAML 核心字段
+yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deploy
+  labels:
+    app: nginx
+spec:
+  replicas: 3                     # 期望副本数
+  selector:                       # 选择器（必须匹配 Pod 模板的标签）
+    matchLabels:
+      app: nginx
+  strategy:                       # 更新策略
+    type: RollingUpdate           # RollingUpdate（默认）或 Recreate
+    rollingUpdate:
+      maxSurge: 25%               # 滚动更新时最多超出期望副本数的百分比或个数
+      maxUnavailable: 25%         # 滚动更新时最多不可用的副本数百分比或个数
+  revisionHistoryLimit: 10        # 保留的历史版本数（默认10）
+  template:                       # Pod 模板
+    metadata:
+      labels:                     # 必须匹配 selector
+        app: nginx
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.20
+        ports:
+        - containerPort: 80
+三、Deployment 的更新策略
+1. RollingUpdate（滚动更新，默认）
+maxSurge：更新过程中允许超出 replicas 的 Pod 最大数量（绝对值或百分比）。默认 25%。
+
+maxUnavailable：更新过程中允许不可用的 Pod 最大数量。默认 25%。
+
+过程：先启动新 Pod，待就绪后逐步删除旧 Pod，保证服务不中断。
+
+2. Recreate（重建）
+先删除所有旧 Pod，再创建新 Pod。
+
+会导致短暂的服务中断，适用于不能同时运行多个版本的场景（如某些有状态应用）。
+
+四、常用操作
+bash
+# 创建 Deployment
+kubectl apply -f deploy.yaml
+
+# 查看 Deployment
+kubectl get deployments
+kubectl describe deployment nginx-deploy
+
+# 查看滚动更新状态
+kubectl rollout status deployment nginx-deploy
+
+# 查看历史版本
+kubectl rollout history deployment nginx-deploy
+
+# 更新镜像（触发滚动更新）
+kubectl set image deployment nginx-deploy nginx=nginx:1.21 --record
+# 或修改 YAML 后再次 apply
+
+# 回滚到上一版本
+kubectl rollout undo deployment nginx-deploy
+
+# 回滚到指定版本
+kubectl rollout undo deployment nginx-deploy --to-revision=2
+
+# 扩容/缩容
+kubectl scale deployment nginx-deploy --replicas=5
+
+# 暂停更新（用于金丝雀发布）
+kubectl rollout pause deployment nginx-deploy
+
+# 恢复更新
+kubectl rollout resume deployment nginx-deploy
+五、滚动更新过程详解
+创建一个新的 ReplicaSet（版本 v2），初始副本数为 0。
+
+按照 maxSurge 和 maxUnavailable 的规则，逐步增加新 RS 的副本，同时减少旧 RS 的副本。
+
+新 Pod 启动后，必须通过 readinessProbe 探针才会被视为可用。
+
+重复上述步骤，直到所有旧 Pod 被替换。
+
+旧 ReplicaSet 保留（数量取决于 revisionHistoryLimit），以便回滚。
+
+六、回滚原理
+每次更新（包括镜像、环境变量等）都会生成一个新的 ReplicaSet。
+
+kubectl rollout undo 会将 Deployment 的 Pod 模板指向历史版本的 ReplicaSet 的模板。
+
+回滚时，会再次触发滚动更新，将 Pod 恢复到旧版本。
+
+七、生产最佳实践
+始终设置资源限制（requests/limits），避免滚动更新时资源争抢。
+
+配置 readinessProbe，确保新 Pod 真正就绪后才接收流量。
+
+设置合适的 maxSurge 和 maxUnavailable：快速更新可用 maxUnavailable: 0，maxSurge: 50%；稳定优先可设置 maxSurge: 25%，maxUnavailable: 25%。
+
+使用 --record 记录变更命令（或通过注解记录）。
+
+保留适当的历史版本（revisionHistoryLimit），便于回滚。
+
+结合 HPA（HorizontalPodAutoscaler）实现自动扩缩容。
+
+八、与 ReplicaSet 的关系
+Deployment 通过 ReplicaSet 管理 Pod。
+
+每次 Deployment 更新，会创建一个新的 ReplicaSet，并逐步增加其副本数，同时减少旧 ReplicaSet 的副本数。
+
+旧 ReplicaSet 保留用于回滚。
+
