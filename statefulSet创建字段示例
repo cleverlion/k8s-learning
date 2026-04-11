@@ -1,0 +1,63 @@
+---
+# Headless Service：为 StatefulSet 提供稳定的网络标识
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-svc          # Service 名称，对应 StatefulSet 的 serviceName
+  labels:
+    app: nginx
+spec:
+  ports:
+  - port: 80
+    name: web              # 端口名称，可被其他资源引用
+  clusterIP: None          # 关键：Headless Service，不分配 ClusterIP
+  selector:
+    app: nginx             # 必须匹配 StatefulSet Pod 模板中的 labels
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: web                # StatefulSet 名称，Pod 命名为 web-0, web-1, ...
+spec:
+  serviceName: "nginx-svc" # 必填：关联的 Headless Service 名称
+  replicas: 3              # Pod 副本数，按序创建：web-0 → web-1 → web-2
+  selector:
+    matchLabels:
+      app: nginx           # 必须匹配 Pod 模板中的 labels
+  updateStrategy:          # 更新策略
+    type: RollingUpdate    # RollingUpdate 或 OnDelete
+    rollingUpdate:
+      partition: 0         # 分区更新：只更新序号 >= partition 的 Pod（默认0表示全量）
+  template:                # Pod 模板
+    metadata:
+      labels:
+        app: nginx         # 必须匹配 selector
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.25
+        ports:
+        - containerPort: 80
+          name: web        # 端口名称，与 Service 的端口名称对应
+        # 可选：资源限制
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        # 可选：挂载卷（配合 volumeClaimTemplates 或手动创建的 PVC）
+        volumeMounts:
+        - name: www        # 卷名称，必须匹配 volumeClaimTemplates 中的 name 或手动 PVC
+          mountPath: /usr/share/nginx/html  # 容器内挂载路径
+  # 动态创建 PVC 的模板：为每个 Pod 生成独立的持久化存储
+  volumeClaimTemplates:
+  - metadata:
+      name: www            # 卷名称，与 volumeMounts 中的 name 一致
+    spec:
+      accessModes: ["ReadWriteOnce"]  # 访问模式：RWO、ROX、RWX
+      storageClassName: "standard"    # 可选：指定 StorageClass
+      resources:
+        requests:
+          storage: 1Gi     # 每个 Pod 请求的存储大小
