@@ -1,0 +1,81 @@
+---
+# DaemonSet 示例：在每个节点上运行一个日志收集器（fluentd）
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: fluentd
+  namespace: kube-system
+  labels:
+    app: fluentd
+spec:
+  selector:                 # 必填，选择器必须匹配 Pod 模板的 labels
+    matchLabels:
+      app: fluentd
+  template:
+    metadata:
+      labels:
+        app: fluentd
+    spec:
+      tolerations:          # 可选：允许调度到 master 节点（默认 master 有污点）
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
+      containers:
+      - name: fluentd
+        image: fluentd:latest
+        resources:
+          limits:
+            memory: 200Mi
+          requests:
+            cpu: 100m
+            memory: 200Mi
+        volumeMounts:
+        - name: varlog
+          mountPath: /var/log
+        - name: dockercontainers
+          mountPath: /var/lib/docker/containers
+          readOnly: true
+      volumes:
+      - name: varlog
+        hostPath:
+          path: /var/log
+      - name: dockercontainers
+        hostPath:
+          path: /var/lib/docker/containers
+  updateStrategy:           # 更新策略
+    type: RollingUpdate     # 支持 RollingUpdate（默认）或 OnDelete
+    rollingUpdate:
+      maxUnavailable: 1     # 滚动更新时最多同时不可用的节点数（绝对值或百分比）
+
+        典型用途：日志收集（Fluentd、Filebeat）、监控代理（Prometheus Node Exporter）、网络插件（Calico、Flannel）、存储插件（CSI 驱动）。
+
+
+        三、关键字段详解
+字段	必填	说明
+selector.matchLabels	是	必须匹配 template 中的 labels。
+template	是	Pod 模板。
+updateStrategy.type	否	RollingUpdate（默认）或 OnDelete。
+rollingUpdate.maxUnavailable	否	滚动更新时最多同时不可用的 Pod 数量（默认 1）。
+minReadySeconds	否	新创建的 Pod 被认为就绪的最短秒数（默认 0）。
+revisionHistoryLimit	否	保留的历史版本数（默认 10）。
+
+        # 创建/更新 DaemonSet
+kubectl apply -f daemonset.yaml
+
+# 查看 DaemonSet
+kubectl get daemonset -n kube-system
+kubectl describe ds fluentd -n kube-system
+
+# 查看 DaemonSet 管理的 Pod
+kubectl get pods -n kube-system -l app=fluentd -o wide
+
+# 删除 DaemonSet
+kubectl delete ds fluentd -n kube-system
+
+# 查看滚动更新状态
+kubectl rollout status ds fluentd -n kube-system
+
+# 回滚
+kubectl rollout undo ds fluentd -n kube-system
+
+        
