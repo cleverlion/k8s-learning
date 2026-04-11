@@ -1,0 +1,34 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: nginx-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: nginx-hpa
+  minReplicas: 1
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 50   # 目标 CPU 使用率为 50%
+
+依次执行以下命令，创建 Deployment 和 HPA，并观察其状态。
+
+bash
+# 应用配置
+kubectl apply -f nginx-hpa.yaml
+kubectl apply -f hpa.yaml
+
+# 查看 HPA 状态，最初 TARGETS 列可能显示 <unknown>
+kubectl get hpa
+
+# 模拟负载，打开一个新的终端，持续访问 Nginx Service
+kubectl run -it --rm load-generator --image=busybox -- /bin/sh -c "while true; do wget -q -O- http://nginx-hpa; done"
+
+# 回到原终端，持续观察 HPA 变化，TARGETS 列会上升并触发扩容
+kubectl get hpa -w
