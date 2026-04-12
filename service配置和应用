@@ -1,0 +1,160 @@
+---
+# 示例：一个简单的 ClusterIP Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-service           # Service 名称
+  namespace: default
+  labels:
+    app: my-app
+spec:
+  type: ClusterIP            # 类型：ClusterIP（默认）、NodePort、LoadBalancer、ExternalName
+  selector:                  # 标签选择器，用于匹配后端 Pod
+    app: my-app              # 必须与 Pod 的 labels 一致
+  ports:
+  - name: http               # 端口名称（可选，便于标识）
+    protocol: TCP            # 协议：TCP（默认）、UDP、SCTP
+    port: 80                 # Service 监听的端口（集群内访问的端口）
+    targetPort: 8080         # 后端 Pod 上的端口（若省略，默认与 port 相同）
+    # nodePort: 30000        # 仅在 type: NodePort 时有效，指定节点端口（范围 30000-32767）
+  sessionAffinity: None      # 会话亲和性：None（默认）或 ClientIP（基于客户端 IP）
+  # sessionAffinityConfig:    # 会话亲和性超时配置
+  #   clientIP:
+  #     timeoutSeconds: 10800
+  # internalTrafficPolicy: Cluster  # 内部流量策略：Cluster（默认，所有节点）或 Local（仅本节点）
+  # externalTrafficPolicy: Cluster  # 外部流量策略：Cluster（默认）或 Local（保留客户端源 IP）
+
+  一、Service 核心字段详解
+字段	说明	示例/备注
+spec.type	Service 类型	ClusterIP, NodePort, LoadBalancer, ExternalName
+spec.selector	标签选择器，定义 Service 将流量转发给哪些 Pod	app: my-app
+spec.ports[].port	Service 暴露的端口（集群内其他资源访问时使用的端口）	80
+spec.ports[].targetPort	后端 Pod 上实际监听的端口（可以与 port 不同）	8080；若不指定，默认与 port 相同
+spec.ports[].nodePort	仅在 type: NodePort 时使用，指定节点上开放的端口	30000；若不指定，系统自动分配
+spec.clusterIP	手动指定 Service IP（通常不指定）	10.96.100.1；设为 None 表示 Headless Service
+spec.sessionAffinity	会话亲和性	ClientIP 表示同一客户端的请求始终转发到同一个 Pod
+spec.externalTrafficPolicy	外部流量策略	Local 可保留客户端源 IP，但可能导致负载不均
+
+
+二、Service 类型详解
+1. ClusterIP（默认）
+作用：在集群内部暴露服务，只能被集群内的其他资源访问。
+
+场景：内部 API、数据库、后端服务。
+
+示例：
+
+yaml
+spec:
+  type: ClusterIP
+  clusterIP: 10.96.100.1   # 可省略，自动分配
+
+  
+2. NodePort
+作用：在每个节点上开放一个静态端口（30000-32767），外部可以通过 <节点IP>:<nodePort> 访问服务。
+
+场景：测试环境、需要外部访问但无负载均衡器。
+
+示例：
+
+yaml
+spec:
+  type: NodePort
+  ports:
+  - port: 80
+    targetPort: 8080
+    nodePort: 30080         # 可选，不指定则自动分配
+
+    
+3. LoadBalancer
+作用：在支持云厂商（AWS、GCP、Azure、阿里云等）的环境中，自动创建一个外部负载均衡器，将外部流量分发到节点。
+
+场景：生产环境对外暴露服务。
+
+示例：
+
+yaml
+spec:
+  type: LoadBalancer
+  loadBalancerIP: 1.2.3.4   # 可选，指定负载均衡器 IP（需云厂商支持）
+
+  
+4. ExternalName
+作用：将服务映射到外部 DNS 名称，返回 CNAME 记录，不进行代理。
+
+场景：访问集群外部的服务（如外部数据库）。
+
+示例：
+
+yaml
+spec:
+  type: ExternalName
+  externalName: my.database.example.com
+
+  
+三、Headless Service（无头服务）
+当 spec.clusterIP 设置为 None 时，Service 成为 Headless Service。它不为 Service 分配虚拟 IP，而是直接返回后端 Pod 的 IP 列表（通过 DNS A 记录）。通常配合 StatefulSet 使用，为每个 Pod 提供稳定的 DNS 名称。
+
+示例：
+
+yaml
+spec:
+  clusterIP: None
+  selector:
+    app: my-stateful-app
+
+    
+四、常用操作命令
+bash
+# 创建 Service（使用 YAML 文件）
+kubectl apply -f service.yaml
+
+# 查看 Service 列表
+kubectl get svc
+kubectl get svc -n my-namespace
+
+# 查看 Service 详细信息
+kubectl describe svc my-service
+
+# 查看 Service 的 Endpoints（后端 Pod IP 列表）
+kubectl get endpoints my-service
+
+# 删除 Service
+kubectl delete svc my-service
+
+# 端口转发（本地访问集群内 Service）
+kubectl port-forward svc/my-service 8080:80
+
+
+五、生产最佳实践
+合理选择 Service 类型：内部服务用 ClusterIP，需要外部访问用 LoadBalancer（云环境）或 Ingress + ClusterIP。
+
+使用 Ingress 代替多个 LoadBalancer：对于 HTTP/HTTPS 服务，使用 Ingress 作为七层负载均衡器，可减少成本并提供更灵活的路由。
+
+为 Service 设置端口名称：特别是当 Service 暴露多个端口时，使用 name 字段便于识别。
+
+注意 targetPort 与 port 的区别：确保 targetPort 与 Pod 容器内实际监听的端口一致。
+
+调试技巧：如果 Service 无法访问，依次检查：
+
+Pod 是否正常运行（kubectl get pods）
+
+Service 的 Endpoints 是否有后端 IP（kubectl get endpoints）
+
+标签选择器是否匹配（kubectl describe svc 查看 Selector）
+
+防火墙/安全组是否放通 NodePort 或 LoadBalancer 端口。
+
+
+
+六、实验建议
+创建一个 Deployment（3 个 Nginx Pod），并创建 ClusterIP Service。
+
+在集群内（如通过 kubectl run busybox --rm -it --image=busybox -- sh）使用 wget -O- http://my-service 访问，观察负载均衡效果。
+
+将 Service 改为 NodePort，通过宿主机 IP 和端口访问。
+
+查看 Endpoints 变化：删除一个 Pod，观察 Endpoints 是否自动更新。
+
+配置会话亲和性（sessionAffinity: ClientIP），多次访问观察是否始终路由到同一 Pod。
+
