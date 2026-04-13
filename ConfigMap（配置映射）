@@ -1,0 +1,69 @@
+作用：存储非敏感配置信息，如环境变量、配置文件、命令行参数。将配置与镜像解耦，使应用可移植。
+
+1. 创建 ConfigMap 的几种方式
+从字面值创建
+bash
+kubectl create configmap app-config --from-literal=APP_COLOR=blue --from-literal=APP_MODE=prod
+从文件创建
+bash
+# 假设有 application.properties 文件
+kubectl create configmap app-config --from-file=application.properties
+从目录创建
+bash
+kubectl create configmap app-config --from-file=./configs/
+YAML 方式（推荐生产使用）
+yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  APP_COLOR: blue
+  APP_MODE: prod
+  # 也可以嵌入多行文本
+  app.properties: |
+    key1=value1
+    key2=value2
+
+
+2. 在 Pod 中使用 ConfigMap
+
+方式一：环境变量（全部注入）
+yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: test-pod
+spec:
+  containers:
+  - name: myapp
+    image: nginx
+    envFrom:
+    - configMapRef:
+        name: app-config   # 注入所有变量
+
+方式二：环境变量（选择性注入）
+yaml
+env:
+- name: SPECIAL_LEVEL
+  valueFrom:
+    configMapKeyRef:
+      name: app-config
+      key: APP_COLOR
+
+方式三：挂载为文件（volume）
+yaml
+spec:
+  containers:
+  - name: myapp
+    volumeMounts:
+    - name: config
+      mountPath: /etc/config
+  volumes:
+  - name: config
+    configMap:
+      name: app-config
+
+
+挂载后，每个键会成为一个文件，文件内容为对应的值。
+
