@@ -1,0 +1,53 @@
+# apiVersion: API 版本，PVC 属于核心资源组 v1
+apiVersion: v1
+# kind: 资源类型，这里是 PersistentVolumeClaim
+kind: PersistentVolumeClaim
+metadata:
+  # name: PVC 的名称，在所在 Namespace 中唯一
+  # Pod 通过这个名称来引用 PVC
+  name: my-pvc
+  # namespace: 可选，指定 PVC 所在的命名空间，默认是 default
+  # 注意：PVC 只能被同一个 Namespace 下的 Pod 引用
+  # namespace: default
+  # labels: 可选标签，便于筛选管理
+  # labels:
+  #   app: my-app
+  #   env: test
+spec:
+  # ========== 访问模式 ==========
+  # accessModes: 声明 PVC 需要的访问模式，必须与 PV 支持的访问模式匹配
+  # 可选值：
+  #   - ReadWriteOnce (RWO): 单节点读写
+  #   - ReadOnlyMany  (ROX): 多节点只读
+  #   - ReadWriteMany  (RWX): 多节点读写
+  # 注意：PV 的 accessModes 必须包含 PVC 声明的模式，才能绑定
+  accessModes:
+    - ReadWriteOnce      # 与你之前创建的 pv001 匹配
+
+  # ========== 存储容量需求 ==========
+  resources:
+    requests:
+      # storage: PVC 申请的最小存储容量
+      # PV 的 capacity.storage 必须 ≥ 此值，才能绑定
+      storage: 2Gi       # pv001 容量是 3Gi，2Gi ≤ 3Gi，可以绑定
+
+  # ========== 存储类名称 ==========
+  # storageClassName: 指定需要绑定的 StorageClass
+  # 可选值：
+  #   - "manual": 绑定到 storageClassName 为 "manual" 的 PV（你设置的 pv001 是 "manual"）
+  #   - "":      空字符串表示不使用 StorageClass（只绑定到同样没有 StorageClass 的 PV）
+  #   - "slow":  如果你有名为 "slow" 的 StorageClass，可以指定
+  # 如果留空不写，K8s 会使用集群默认的 StorageClass（如果有的话）
+  storageClassName: manual   # 与你之前创建的 pv001 匹配
+
+  # ========== 卷模式 ==========
+  # volumeMode: 卷的模式，必须与 PV 的 volumeMode 一致
+  # 可选值：
+  #   - Filesystem: 文件系统模式（默认，不写即为 Filesystem）
+  #   - Block: 块设备模式
+  volumeMode: Filesystem    # 与 pv001 一致
+
+  # ========== 指定要绑定的 PV 名称（可选） ==========
+  # volumeName: 如果不写，K8s 会根据 accessModes、storage、storageClassName 自动匹配
+  # 如果指定了 volumeName，PVC 只会绑定到该名称的 PV（即使有其他符合条件的 PV 也不会绑）
+  # volumeName: pv001      # 你可以取消注释来直接绑定到 pv001
