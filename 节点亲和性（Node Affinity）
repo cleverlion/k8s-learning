@@ -1,0 +1,90 @@
+示例：硬亲和 + 软亲和组合
+yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: affinity-demo
+spec:
+  affinity:
+    nodeAffinity:
+      # 硬亲和：必须落在有 disktype=ssd 标签的节点上
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: disktype
+            operator: In
+            values:
+            - ssd
+      # 软亲和：优先选择带有 zone=beijing 标签的节点（权重 100）
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        preference:
+          matchExpressions:
+          - key: zone
+            operator: In
+            values:
+            - beijing
+  containers:
+  - name: nginx
+    image: nginx
+
+调度器先过滤出所有带有 disktype=ssd 标签的节点（硬要求）。
+
+在过滤出的节点中，优先选择带有 zone=beijing 标签的节点（软偏好）。
+
+如果没有任何节点带有 zone=beijing，Pod 仍然会调度到某个 disktype=ssd 的节点上。
+
+如果没有节点带有 disktype=ssd，Pod 将永远 Pending。
+
+操作符（Operator）详解
+节点亲和性支持以下匹配操作符：
+
+操作符	含义	示例
+In	标签值在指定列表中	values: [ssd, nvme]
+NotIn	标签值不在指定列表中	values: [hdd]
+Exists	标签键存在（不管值是什么）	不需要写 values 字段
+DoesNotExist	标签键不存在	不需要写 values
+Gt	标签值大于指定数字（字符串比较）	values: ["5"]
+Lt	标签值小于指定数字	values: ["10"]
+📌 与 nodeSelector 的对比
+特性	nodeSelector	nodeAffinity
+匹配方式	只能“相等”匹配	支持 In, NotIn, Exists, Gt, Lt 等
+软硬策略	只有硬性要求	支持硬亲和和软亲和
+表达能力	简单键值对	复杂逻辑表达式
+建议：未来所有调度策略优先使用 nodeAffinity，nodeSelector 可作为简单场景的快速写法。
+
+🧪 实用场景速查
+场景	配置思路
+Pod 必须跑在 GPU 节点	required... + matchExpressions: key=gpu-type, operator=In, values=[v100]
+Pod 尽量跑在内存大的节点	preferred... + key=memory, operator=Gt, values=[64Gi]
+避免 Pod 跑到 Master 节点	required... + key=node-role.kubernetes.io/control-plane, operator=DoesNotExist
+开发环境 Pod 只跑在带 env=dev 标签的节点	required... + key=env, operator=In, values=[dev]
+💡 与污点/容忍的配合
+最佳实践：
+
+用污点隔离专用节点（如 GPU 节点打上 gpu=true:NoSchedule）。
+
+用容忍让专用 Pod 能进入这些节点。
+
+用节点亲和性确保这些 Pod 优先或强制落在专用节点上。
+
+组合示例：
+
+yaml
+spec:
+  tolerations:
+  - key: "gpu"
+    operator: "Equal"
+    value: "true"
+    effect: "NoSchedule"
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: gpu
+            operator: In
+            values:
+            - "true"
+这样配置后，Pod 只能落到有 GPU 标签且能容忍 GPU 污点的节点上，实现了精准的专用节点绑定。
+
