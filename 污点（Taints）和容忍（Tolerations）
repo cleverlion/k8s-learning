@@ -1,0 +1,37 @@
+污点（Taint） 是打在 节点（Node） 上的一个标记，意思是“这个节点有某些缺点，不符合条件的 Pod 不要来”。
+容忍（Toleration） 是配置在 Pod 上的一个属性，意思是“我可以容忍节点的某些污点，让我上去”。
+
+它们是反向亲和性：节点主动排斥 Pod，只有声明了对应容忍的 Pod 才能被调度上去。
+
+一个污点由三部分组成，格式为：key=value:Effect
+
+部分	说明	示例
+key	污点的名称，自定义	gpu、env、node-type
+value	污点的值，自定义	true、production、v100
+Effect	污点对 Pod 的影响级别	NoSchedule、PreferNoSchedule、NoExecute
+    Effect	行为
+    NoSchedule	新 Pod 不会被调度到这个节点，但已运行的 Pod 不受影响。
+    PreferNoSchedule	尽量不调度新 Pod 到这个节点，但不强制（软限制）。
+    NoExecute	最严格：新 Pod 不会被调度，且已运行的 Pod 如果没有对应容忍，会被立即驱逐。
+
+# 语法：kubectl taint nodes <node-name> <key>=<value>:<Effect>
+kubectl taint nodes node01 gpu=true:NoSchedule
+# 删除 key 为 gpu 的污点（无论 value 和 Effect 是什么）
+kubectl taint nodes node01 gpu-
+
+
+容忍（Toleration）的配置
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gpu-pod
+spec:
+  containers:
+  - name: cuda-container
+    image: nvidia/cuda:11.0
+  tolerations:
+  - key: "gpu"
+    operator: "Equal"
+    value: "true"
+    effect: "NoSchedule"
