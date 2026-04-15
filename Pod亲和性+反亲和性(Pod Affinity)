@@ -1,0 +1,33 @@
+Pod亲和性 (Pod Affinity)	将Pod调度到与其他特定Pod相同的拓扑域中	让前端Pod靠近后端Pod以减少网络延迟；让辅助容器（如日志采集器）与主容器部署在同一节点。
+
+Pod反亲和性 (Pod Anti-Affinity)	将Pod调度到与其他特定Pod不同的拓扑域中	让同一Deployment的多个副本分散在不同节点/可用区，避免单点故障。
+
+实战示例：Nginx 多副本强制分散到不同节点
+yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deploy
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx          # 给 Pod 打上标签
+    spec:
+      affinity:
+        podAntiAffinity:    # Pod 反亲和性
+          requiredDuringSchedulingIgnoredDuringExecution:  # 硬性要求：必须分散
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - nginx        # 目标：和自己一样带 app=nginx 的 Pod
+            topologyKey: kubernetes.io/hostname   # 分散维度：不同节点
+      containers:
+      - name: nginx
+        image: nginx
