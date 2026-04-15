@@ -1,0 +1,78 @@
+普通用户 (Normal User)	集群外部管理（如 TLS 证书、OIDC 令牌）	你（管理员）、开发人员、CI/CD 系统
+服务账户 (ServiceAccount)	集群内部资源（由 K8s 管理）	Pod 内运行的应用程序、集群组件
+
+认证方式	原理	适用场景	优点	缺点
+X.509 客户端证书	使用 TLS 证书中的 CN（Common Name）和 O（Organization）字段识别用户和组	集群管理员、kubelet 等组件	简单、内置、无需外部依赖	证书管理复杂，撤销困难
+Bearer Token（静态令牌）	API Server 读取 --token-auth-file 指定的 CSV 文件	仅限测试环境	极其简单	不安全、不灵活、已不推荐
+Bootstrap Token	专门用于 kubeadm join 的临时令牌	新节点加入集群	自动过期，适合引导场景	仅用于节点引导
+服务账户令牌 (ServiceAccount Token)	每个 ServiceAccount 自动挂载一个 JWT 令牌到 Pod 内	Pod 访问 API Server 的标准方式	自动管理、可绑定 RBAC	默认不设置过期时间（需配置）
+OpenID Connect (OIDC)	委托给外部身份提供商（如 Google、GitHub、LDAP、Dex）	企业生产环境首选	集中管理、支持多因素认证、审计方便	配置复杂，依赖外部服务
+Webhook Token 认证	API Server 将令牌发给外部 HTTP 服务验证	与内部自建认证系统集成	高度灵活	需自行开发 Webhook 服务
+
+实战一：使用 X.509 证书创建普通用户
+这是 CKA 考试中常见的操作题。
+
+场景：创建一个名为 developer 的用户，并让其拥有查看 Pod 的权限。
+
+步骤：
+
+生成私钥和证书签名请求 (CSR)
+
+bash
+openssl genrsa -out developer.key 2048
+openssl req -new -key developer.key -out developer.csr -subj "/CN=developer/O=dev-team"
+CN=developer → 用户名
+
+O=dev-team → 用户组（授权时可直接对组授权）
+
+使用集群的 CA 签发证书
+
+bash
+# 假设集群 CA 证书和私钥在 /etc/kubernetes/pki/
+openssl x509 -req -in developer.csr \
+  -CA /etc/kubernetes/pki/ca.crt \
+  -CAkey /etc/kubernetes/pki/ca.key \
+  -CAcreateserial \
+  -out developer.crt -days 365
+配置 kubectl 上下文
+
+bash
+kubectl config set-credentials developer --client-certificate=developer.crt --client-key=developer.key
+kubectl config set-context developer-context --cluster=kubernetes --user=developer
+# 切换到该用户测试
+kubectl config use-context developer-context
+kubectl get pods  # 此时会因为未授权而失败，需要 RBAC 授权
+🛠️ 实战二：ServiceAccount 详解
+ServiceAccount 是 Pod 在集群内的身份证。
+
+查看默认 ServiceAccount：
+
+bash
+kubectl get sa
+每个命名空间都有一个 default ServiceAccount，如果不指定，Pod 默认挂载它的令牌。
+
+查看挂载的令牌：
+
+bash
+kubectl exec -it <pod-name> -- cat /var/run/secrets/kubernetes.io/serviceaccount/token
+创建并使用自定义 ServiceAccount：
+
+yaml
+# 1. 创建 SA
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: my-sa
+---
+# 2. 在 Pod 中指定
+apiVersion: v1
+kind: Pod
+metadata:
+  name: sa-demo
+spec:
+  serviceAccountName: my-sa   # 显式指定
+  containers:
+  - name: busybox
+    image: busybox
+    command: ['sleep', '3600']
+重要变更（K8s 1.24+）：ServiceAccount 的令牌不再自动永久有效。若需长期令牌，需手动创建 Secret（kubernetes.io/service-account-token 类型）并关联 SA。
